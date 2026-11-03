@@ -1,0 +1,32 @@
+# VectorNav overlay recipes (run from the repository root: `just -f custom/justfile <recipe>`).
+# The screenshot harness: custom/src/VectorNavScreenshots.cc walks the main window through a fixed scene list and
+# writes one PNG (plus a .mask.json with the map rectangles) per scene. VECTORNAV-GCS-PLAN.md item 1.5.
+#   screenshots        the Debug tree's unit test (VectorNavScreenshotTest: stock scenes, then the PX4 MockLink scenes)
+#   screenshots-release the Release binary or AppImage driven by VN_SCREENSHOT_DIR (no vehicle: MockLink is Debug-only)
+#   screenshots-diff   pixel-diff two sets
+
+qt_version := `python3 ./tools/setup/read_config.py --get qt.version 2>/dev/null || echo "6.11.1"`
+qt_dir := env_var_or_default("QT_DIR", home_directory() / "Qt" / qt_version / "gcc_64")
+debug_dir := env_var_or_default("DEBUG_DIR", "build-debug")
+release_bin := env_var_or_default("RELEASE_BIN", "build/Release/QGroundControl")
+out := env_var_or_default("VN_SCREENSHOT_DIR", "screenshots")
+
+default:
+    @just -f custom/justfile --list --unsorted
+
+# Debug: the harness test writes <out>/debug-stock and <out>/debug-vehicle
+screenshots:
+    mkdir -p {{out}}
+    cd {{debug_dir}} && VN_SCREENSHOT_DIR="$(cd .. && pwd)/{{out}}" ctest --output-on-failure -R VectorNavScreenshotTest
+
+# Release: the binary (or an AppImage via RELEASE_BIN) renders the stock scenes offscreen into <out>/release-stock
+# Settings are isolated under <out>/release-config so the host's QGroundControl settings never influence a scene.
+screenshots-release:
+    mkdir -p {{out}}/release-stock {{out}}/release-config
+    QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software LIBGL_ALWAYS_SOFTWARE=1 \
+    XDG_CONFIG_HOME={{out}}/release-config XDG_DATA_HOME={{out}}/release-config XDG_CACHE_HOME={{out}}/release-config \
+    VN_SCREENSHOT_DIR={{out}}/release-stock timeout 300 {{release_bin}}
+
+# Compare two sets: 0 differing pixels per image outside the map masks is the acceptance
+screenshots-diff baseline candidate:
+    python3 custom/tools/screenshot-diff.py {{baseline}} {{candidate}} --out {{candidate}}/diff
